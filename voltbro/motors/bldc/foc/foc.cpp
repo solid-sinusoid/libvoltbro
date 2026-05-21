@@ -284,7 +284,11 @@ void FOC::update() {
             i_q_set = controller_response * get_direction_multiplier();
         }
 
-        const float abs_max_current_from_torque = (drive_info.max_torque / drive_info.torque_const / gear_ratio_f);
+        const float effective_torque_limit =
+            is_symmetric_limit_set(drive_limits.user_torque_limit) ?
+                drive_limits.user_torque_limit :
+                drive_info.max_torque;
+        const float abs_max_current_from_torque = (effective_torque_limit / drive_info.torque_const / gear_ratio_f);
         if (fabs(i_q_set) > fabs(abs_max_current_from_torque)) {
             i_q_set = copysign(abs_max_current_from_torque, i_q_set);
         }

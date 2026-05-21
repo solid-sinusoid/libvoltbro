@@ -104,7 +104,7 @@ struct __attribute__((packed)) BaseConfigData {
     uint32_t type_id = BaseConfigData::TYPE_ID;
 
     bool are_required_params_set() const {
-        return node_id != 0;
+        return node_id != 0 && node_id <= CANARD_NODE_ID_MAX;
     }
 };
 

@@ -43,9 +43,7 @@ public:
     virtual void update() = 0;
 
     virtual HAL_StatusTypeDef apply_runtime_config() {
-        if (std::isnan(drive_runtime_config.current_limit)) {
-            drive_runtime_config.current_limit = drive_runtime_config.user_current_limit;
-        }
+        drive_runtime_config.current_limit = drive_runtime_config.user_current_limit;
         return HAL_OK;
     };
 
