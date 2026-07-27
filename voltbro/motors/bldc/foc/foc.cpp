@@ -52,6 +52,53 @@ volatile float value_foc_t = 0;
 volatile encoder_data raw_value = 0;
 #endif
 
+bool FOC::set_velocity_lpf_cutoff_hz(float cutoff_hz) {
+    static constexpr float MAX_CUTOFF_HZ = 2000.0f;
+    if (!std::isfinite(cutoff_hz) || cutoff_hz < 0.0f || cutoff_hz > MAX_CUTOFF_HZ) {
+        return false;
+    }
+
+    velocity_lpf_cutoff_hz = cutoff_hz;
+    velocity_lpf_alpha = cutoff_hz > 0.0f ?
+        1.0f - std::exp(-pi2 * cutoff_hz * T) :
+        1.0f;
+    reset_mechanical_control_filter();
+    return true;
+}
+
+bool FOC::set_position_slew_rad_per_s(float slew_rad_per_s) {
+    static constexpr float MAX_SLEW_RAD_PER_S = 100.0f;
+    if (
+        !std::isfinite(slew_rad_per_s) ||
+        slew_rad_per_s < 0.0f ||
+        slew_rad_per_s > MAX_SLEW_RAD_PER_S
+    ) {
+        return false;
+    }
+
+    position_slew_rad_per_s = slew_rad_per_s;
+    reset_mechanical_control_filter();
+    return true;
+}
+
+bool FOC::set_position_deadband_rad(float deadband_rad) {
+    static constexpr float MAX_DEADBAND_RAD = 0.1f;
+    if (
+        !std::isfinite(deadband_rad) ||
+        deadband_rad < 0.0f ||
+        deadband_rad > MAX_DEADBAND_RAD
+    ) {
+        return false;
+    }
+
+    position_deadband_rad = deadband_rad;
+    return true;
+}
+
+void FOC::reset_mechanical_control_filter() {
+    mechanical_control_filter_initialized = false;
+}
+
 void FOC::update_angle() {
     encoder.update_value();
 
@@ -252,6 +299,51 @@ void FOC::update() {
         t_start = DWT->CYCCNT;
         #endif
         if (point_type == SetPointType::UNIVERSAL) {
+            const float measured_angle = get_angle();
+            const float measured_velocity = get_velocity();
+            if (!mechanical_control_filter_initialized) {
+                filtered_control_velocity = measured_velocity;
+                limited_control_angle = measured_angle;
+                mechanical_control_filter_initialized = true;
+            }
+
+            const float current_velocity_lpf_cutoff_hz = velocity_lpf_cutoff_hz;
+            float control_velocity = measured_velocity;
+            if (current_velocity_lpf_cutoff_hz > 0.0f) {
+                filtered_control_velocity +=
+                    velocity_lpf_alpha * (measured_velocity - filtered_control_velocity);
+                control_velocity = filtered_control_velocity;
+            }
+            else {
+                filtered_control_velocity = measured_velocity;
+            }
+
+            const float current_position_slew_rad_per_s = position_slew_rad_per_s;
+            if (current_position_slew_rad_per_s > 0.0f) {
+                const float max_angle_step = current_position_slew_rad_per_s * T;
+                const float requested_angle_step = foc_target.angle - limited_control_angle;
+                limited_control_angle += std::clamp(
+                    requested_angle_step,
+                    -max_angle_step,
+                    max_angle_step
+                );
+            }
+            else {
+                limited_control_angle = foc_target.angle;
+            }
+
+            float position_error = limited_control_angle - measured_angle;
+            const float current_position_deadband_rad = position_deadband_rad;
+            if (position_error > current_position_deadband_rad) {
+                position_error -= current_position_deadband_rad;
+            }
+            else if (position_error < -current_position_deadband_rad) {
+                position_error += current_position_deadband_rad;
+            }
+            else {
+                position_error = 0.0f;
+            }
+
             #ifdef MONITOR
             value_foc_p = foc_target.angle;
             value_foc_v = foc_target.velocity;
@@ -260,8 +352,10 @@ void FOC::update() {
             value_foc_t = foc_target.torque;
             #endif
             i_q_set = 1.0f / drive_info.torque_const * (
-                foc_target.angle_kp * (foc_target.angle - get_angle()) +
-                foc_target.velocity_kp * (foc_target.velocity - get_velocity()) +
+                get_direction_multiplier() * (
+                    foc_target.angle_kp * position_error +
+                    foc_target.velocity_kp * (foc_target.velocity - control_velocity)
+                ) +
                 (foc_target.torque / gear_ratio_f)
             );
         }
@@ -285,8 +379,8 @@ void FOC::update() {
         }
 
         const float effective_torque_limit =
-            is_symmetric_limit_set(drive_limits.user_torque_limit) ?
-                drive_limits.user_torque_limit :
+            is_symmetric_limit_set(drive_runtime_config.user_torque_limit) ?
+                drive_runtime_config.user_torque_limit :
                 drive_info.max_torque;
         const float abs_max_current_from_torque = (effective_torque_limit / drive_info.torque_const / gear_ratio_f);
         if (fabs(i_q_set) > fabs(abs_max_current_from_torque)) {

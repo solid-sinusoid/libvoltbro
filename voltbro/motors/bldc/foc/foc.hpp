@@ -79,10 +79,18 @@ protected:
     PIDRegulator q_reg;
     PIDRegulator d_reg;
     PIDRegulator control_reg = PIDRegulator();
+    arm_atomic(float) velocity_lpf_cutoff_hz = 0.0f;
+    arm_atomic(float) velocity_lpf_alpha = 1.0f;
+    arm_atomic(float) position_slew_rad_per_s = 0.0f;
+    arm_atomic(float) position_deadband_rad = 0.0f;
+    float filtered_control_velocity = 0.0f;
+    float limited_control_angle = 0.0f;
+    bool mechanical_control_filter_initialized = false;
 
     void apply_kalman();
     void update_angle();
     virtual void update_shaft_angle();
+    void reset_mechanical_control_filter();
 
     void set_windings_calibration(float current_angle);
 public:
@@ -156,6 +164,18 @@ public:
     }
     const GenericEncoder& get_encoder() const {
         return encoder;
+    }
+    bool set_velocity_lpf_cutoff_hz(float cutoff_hz);
+    float get_velocity_lpf_cutoff_hz() const {
+        return velocity_lpf_cutoff_hz;
+    }
+    bool set_position_slew_rad_per_s(float slew_rad_per_s);
+    float get_position_slew_rad_per_s() const {
+        return position_slew_rad_per_s;
+    }
+    bool set_position_deadband_rad(float deadband_rad);
+    float get_position_deadband_rad() const {
+        return position_deadband_rad;
     }
 
     HAL_StatusTypeDef init() override {

@@ -418,17 +418,20 @@ public:
         HAL_StatusTypeDef stop() override {
             _is_on = false;
             bootstrap_charge_deadline_ms = 0;
+            reset_mechanical_control_filter();
             __HAL_TIM_MOE_DISABLE(htim);
 
-            HAL_StatusTypeDef result = gate_driver.request_standby();
-            if (result != HAL_OK) {
-                return result;
-            }
-            return HAL_OK;
+            // DRV_WAKE also keeps the STSPIN logic supply alive. Entering
+            // standby here powers down the MCU/CAN side of the drive, so a
+            // remote state.is_on=true command can never wake it again.
+            // Keep the gate driver awake and disable only the power-stage PWM
+            // through TIM1 MOE.
+            return gate_driver.wake();
         }
 
         HAL_StatusTypeDef start() override {
             bootstrap_charge_deadline_ms = HAL_GetTick() + bootstrap_charge_time_ms;
+            reset_mechanical_control_filter();
 
             HAL_StatusTypeDef result = gate_driver.wake();
             if (result != HAL_OK) {
