@@ -419,14 +419,20 @@ public:
             _is_on = false;
             bootstrap_charge_deadline_ms = 0;
             reset_mechanical_control_filter();
-            __HAL_TIM_MOE_DISABLE(htim);
 
             // DRV_WAKE also keeps the STSPIN logic supply alive. Entering
             // standby here powers down the MCU/CAN side of the drive, so a
             // remote state.is_on=true command can never wake it again.
-            // Keep the gate driver awake and disable only the power-stage PWM
-            // through TIM1 MOE.
-            return gate_driver.wake();
+            // Keep the gate driver awake, then unconditionally disable the
+            // power-stage PWM as the final operation. __HAL_TIM_MOE_DISABLE()
+            // only clears MOE after every CCx/CCxN channel has already been
+            // disabled, while all six FOC channels remain configured.
+            const HAL_StatusTypeDef wake_result = gate_driver.wake();
+            __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(htim);
+            if ((htim->Instance->BDTR & TIM_BDTR_MOE) != 0U) {
+                return HAL_ERROR;
+            }
+            return wake_result;
         }
 
         HAL_StatusTypeDef start() override {
@@ -444,7 +450,7 @@ public:
 
             result = gate_driver.clear_faults();
             if (result != HAL_OK) {
-                __HAL_TIM_MOE_DISABLE(htim);
+                __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(htim);
                 bootstrap_charge_deadline_ms = 0;
                 return result;
             }
