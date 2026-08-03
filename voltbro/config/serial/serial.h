@@ -167,9 +167,16 @@ protected:
         config_data.print_self(responses);
 
         if (config_data.type_id != ConfigT::TYPE_ID) {
+            // Unknown persistent layouts must never be overwritten
+            // automatically. A different firmware generation may own this
+            // EEPROM block; replacing it with defaults makes rollback unable
+            // to recover the node ID and motor configuration. Continue with
+            // safe in-RAM defaults so the maintenance interface can come up,
+            // but preserve EEPROM until an explicit migration or SAVE.
             config_data = ConfigT();
-            responses.append("Saving config...\r\n");
-            save_config();
+            turn_off();
+            responses.append("Unknown config ABI; EEPROM preserved\r\n");
+            return;
         }
 
         if (!config_data.was_configured || !config_data.are_required_params_set()) {

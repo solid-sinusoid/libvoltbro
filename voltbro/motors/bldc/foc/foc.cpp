@@ -334,14 +334,17 @@ void FOC::update() {
 
             float position_error = limited_control_angle - measured_angle;
             const float current_position_deadband_rad = position_deadband_rad;
-            if (position_error > current_position_deadband_rad) {
-                position_error -= current_position_deadband_rad;
-            }
-            else if (position_error < -current_position_deadband_rad) {
-                position_error += current_position_deadband_rad;
-            }
-            else {
-                position_error = 0.0f;
+            if (current_position_deadband_rad > 0.0f) {
+                // A hard dead zone leaves the joint without positional
+                // stiffness while feed-forward torque remains active. The
+                // resulting drift to the dead-zone edge causes stick-slip and
+                // a limit cycle. Keep a small, smooth restoring stiffness at
+                // every non-zero error while attenuating encoder noise near
+                // zero. For large errors this approaches the former
+                // abs(error) - deadband characteristic.
+                const float absolute_position_error = std::fabs(position_error);
+                position_error *= absolute_position_error /
+                    (absolute_position_error + current_position_deadband_rad);
             }
 
             #ifdef MONITOR
