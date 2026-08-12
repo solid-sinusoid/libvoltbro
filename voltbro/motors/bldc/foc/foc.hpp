@@ -140,12 +140,19 @@ public:
         return I_Q;
     }
 
+    bool is_foc_point_valid(const FOCTarget& target) const {
+        return std::isfinite(target.torque) &&
+               std::isfinite(target.angle) &&
+               std::isfinite(target.velocity) &&
+               std::isfinite(target.angle_kp) &&
+               std::isfinite(target.velocity_kp) &&
+               is_torque_target_valid(target.torque) &&
+               is_angle_target_valid(target.angle) &&
+               is_velocity_target_valid(target.velocity);
+    }
+
     bool set_foc_point(FOCTarget&& target) {
-        if (
-            !is_torque_target_valid(target.torque) ||
-            !is_angle_target_valid(target.angle) ||
-            !is_velocity_target_valid(target.velocity)
-        ) {
+        if (!is_foc_point_valid(target)) {
             return false;
         }
         point_type = SetPointType::UNIVERSAL;
