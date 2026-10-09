@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include "math_ops.hpp"
+#include "consts.h"
 
 inline void Park(float alpha, float beta, float theta, float* d, float* q) {
     float cosine = arm_cos_f32(theta);
@@ -27,13 +28,13 @@ inline void InvPark(float d, float q, float theta, float* alpha, float* beta) {
 
 inline void Clarke(float a, float b, float* alpha, float* beta) {
     *alpha = a;
-    *beta = 0.57735026919f * (a + 2.0f * b);
+    *beta = INV_SQRT3 * (a + 2.0f * b);
 }
 
 inline void InvClarke(float alpha, float beta, float* a, float* b, float* c) {
     *a = alpha;
-    *b = 0.5f * (-alpha + 1.73205080757f * beta);
-    *c = 0.5f * (-alpha - 1.73205080757f * beta);
+    *b = 0.5f * (-alpha + SQRT3 * beta);
+    *c = 0.5f * (-alpha - SQRT3 * beta);
 }
 
 inline void dq0(float sf, float cf, float a, float b, float c, float* d, float* q) {
@@ -44,10 +45,10 @@ inline void dq0(float sf, float cf, float a, float b, float c, float* d, float* 
     // float cf = arm_cos_f32(theta);
     // float sf = arm_sin_f32(theta);
 
-    *d = 0.6666667f * (cf * a + (0.86602540378f * sf - .5f * cf) * b +
-                       (-0.86602540378f * sf - .5f * cf) * c);  /// Faster DQ0 Transform
-    *q = 0.6666667f *
-         (-sf * a - (-0.86602540378f * cf - .5f * sf) * b - (0.86602540378f * cf - .5f * sf) * c);
+    *d = TWO_THIRDS * (cf * a + (HALF_SQRT3 * sf - .5f * cf) * b +
+                       (-HALF_SQRT3 * sf - .5f * cf) * c);  /// Faster DQ0 Transform
+    *q = TWO_THIRDS *
+         (-sf * a - (-HALF_SQRT3 * cf - .5f * sf) * b - (HALF_SQRT3 * cf - .5f * sf) * c);
 }
 
 inline void abc(float sf, float cf, float d, float q, float* a, float* b, float* c) {
@@ -58,8 +59,8 @@ inline void abc(float sf, float cf, float d, float q, float* a, float* b, float*
     // float sf = arm_sin_f32(theta);
 
     *a = cf * d - sf * q;  // Faster Inverse DQ0 transform
-    *b = (0.86602540378f * sf - .5f * cf) * d - (-0.86602540378f * cf - .5f * sf) * q;
-    *c = (-0.86602540378f * sf - .5f * cf) * d - (0.86602540378f * cf - .5f * sf) * q;
+    *b = (HALF_SQRT3 * sf - .5f * cf) * d - (-HALF_SQRT3 * cf - .5f * sf) * q;
+    *c = (-HALF_SQRT3 * sf - .5f * cf) * d - (HALF_SQRT3 * cf - .5f * sf) * q;
 }
 
 inline void svm(float v_bus, float u, float v, float w, float* dtc_u, float* dtc_v, float* dtc_w) {

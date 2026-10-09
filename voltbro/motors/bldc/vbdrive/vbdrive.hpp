@@ -264,16 +264,16 @@ public:
             raw_value = spi_transmit_command_receive(tx_upper);
             //HAL_SPI_TransmitReceive(hspi, (uint8_t*)&tx_upper, (uint8_t*)&raw_value, 1, 1000);
 
-            float new_angle = pi2 * static_cast<float>(raw_value) / 65535.0f;
+            float new_angle = TWO_PI * static_cast<float>(raw_value) / 65535.0f;
             float diff = new_angle - current_angle;
-            if (abs(diff) > PI) {
+            if (abs(diff) > PI_F) {
                 if (diff < 0) {
                     revolutions += 1;
-                    diff += pi2;
+                    diff += TWO_PI;
                 }
                 else {
                     revolutions -= 1;
-                    diff -= pi2;
+                    diff -= TWO_PI;
                 }
             }
             /*
@@ -304,6 +304,7 @@ enum class AngleEncoderType : uint8_t {
 
 class VBDrive final: public FOC {
 protected:
+    static constexpr uint16_t max_pwm_compare = 1760; // Reserve the current-sampling window.
     static constexpr uint32_t bootstrap_charge_time_ms = 5U;
 
     AngleEncoderType angle_encoder =  AngleEncoderType::ROTOR;
@@ -324,7 +325,7 @@ protected:
 
     void update_shaft_angle() override {
         if (angle_encoder == AngleEncoderType::SHAFT) {
-            shaft_angle = inductive_sensor.get_revolutions() * pi2 + inductive_sensor.get_angle();
+            shaft_angle = inductive_sensor.get_revolutions() * TWO_PI + inductive_sensor.get_angle();
         }
         else {
             FOC::update_shaft_angle();
@@ -460,8 +461,8 @@ public:
             // limiting duty cycle to give ADC time to sample current reading
             // RM0440 21.4.12
             for (size_t index = 0; index < 3; index++) {
-                if (DQs[index] > 1760) {
-                    DQs[index] = 1760;
+                if (DQs[index] > max_pwm_compare) {
+                    DQs[index] = max_pwm_compare;
                 }
             }
 

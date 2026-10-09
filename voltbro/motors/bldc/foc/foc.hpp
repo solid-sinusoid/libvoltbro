@@ -15,6 +15,7 @@
 #include "servo_control.hpp"
 #include "voltbro/profiling.hpp"
 #include "voltbro/math/regulators/pid.hpp"
+#include "voltbro/math/consts.h"
 
 #define USE_CALIBRATION_ARRAY
 inline constexpr float MAX_BOARD_CURRENT = 30.0f; // Board current ceiling, A.

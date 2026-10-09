@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utility>
+#include "voltbro/math/consts.h"
 
 #ifdef ARM_MATH_CM4
 #ifdef __cplusplus
@@ -25,7 +26,7 @@ typedef uint16_t encoder_data;
 typedef uint32_t millis;
 typedef uint64_t micros;
 
-#define pi2 6.28318530718f
+#define pi2 TWO_PI
 
 #define FORCE_INLINE __attribute__((always_inline)) inline
 #define arm_atomic(T) alignas(T) T

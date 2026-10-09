@@ -97,7 +97,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
     // Sanity check: quarter mechanical turn forward (open-loop)
     {
         const float elec_step = 0.5f;
-        const float end_angle = pi2 * (float)drive_info.common.ppairs * drive_info.common.gear_ratio / 4;
+        const float end_angle = TWO_PI * (float)drive_info.common.ppairs * drive_info.common.gear_ratio / 4;
         float ang = 0.0f;
         while (ang < end_angle) {
             set_electric_angle(ang, 10);
@@ -129,7 +129,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         float angle = 0.0f;
         set_electric_angle(angle, 100);
 
-        float step = ppairs * pi2 / 4000.0f;
+        float step = ppairs * TWO_PI / 4000.0f;
         if (raw_rotor_angle < (encoder.CPR / 2.0f)) {
             step = -step;
         }
@@ -149,7 +149,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
 
     const int ppair_step_counts = 50;
     const int encoder_steps_per_pair = encoder.CPR / ppairs;
-    const float ppair_step = pi2 / ppair_step_counts;
+    const float ppair_step = TWO_PI / ppair_step_counts;
     const int overshoot_steps = 4;
 
     auto offset_calibration_pass = [&](int* offset_array, int offset) {
@@ -162,7 +162,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         }
 
         for (int i = 0; i < ppairs; i++) {
-            const float local_zero_point = pi2 * i;
+            const float local_zero_point = TWO_PI * i;
             set_electric_angle(local_zero_point);
 
             int expected_value = encoder_steps_per_pair * i;
@@ -178,14 +178,14 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
 
         // Overshoot at the end to avoid hysteresis then roll back a bit
         for (int j = 1; j < overshoot_steps; j++) {
-            set_electric_angle(pi2 * ppairs + ppair_step * j);
+            set_electric_angle(TWO_PI * ppairs + ppair_step * j);
         }
         for (int j = overshoot_steps; j >= 1; j--) {
-            set_electric_angle(pi2 * ppairs + ppair_step * j);
+            set_electric_angle(TWO_PI * ppairs + ppair_step * j);
         }
 
         for (int i = ppairs - 1; i >= 0; i--) {
-            const float local_zero_point = pi2 * (i + 1);
+            const float local_zero_point = TWO_PI * (i + 1);
             set_electric_angle(local_zero_point);
 
             int expected_value = encoder_steps_per_pair * (i + 1);
@@ -259,9 +259,9 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         array->fill(SENTINEL_EMPTY);
     }
 
-    const float electrical_span = (float)ppairs * pi2;
+    const float electrical_span = (float)ppairs * TWO_PI;
     const float electric_angle_delta = electrical_span / (float)calibration_data.calibration_array.size();
-    float encoder_steps_in_electrical_radian = (float)encoder.CPR / (ppairs * pi2);
+    float encoder_steps_in_electrical_radian = (float)encoder.CPR / (ppairs * TWO_PI);
 
     auto sample_point = [&](std::array<int, CALIBRATION_BUFF_SIZE>* arr, float angle_target) {
         set_electric_angle(angle_target, 5);

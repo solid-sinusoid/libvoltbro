@@ -29,7 +29,7 @@ void FOC::update_angle() {
         offset_value += encoder.CPR;
     }
 
-    raw_rotor_angle = offset_value * (pi2 / (float)encoder.CPR);
+    raw_rotor_angle = offset_value * (TWO_PI / (float)encoder.CPR);
 }
 
 /** Estimate rotor motion with a fixed-gain constant-acceleration observer.
@@ -58,14 +58,14 @@ void FOC::apply_kalman() {
         predicted_angle = filter_state.rotor_angle + filter_state.rotor_velocity * T +
                           acceleration * (T * T) / 2.0f;
         predicted_velocity = filter_state.rotor_velocity + acceleration * T;
-        predicted_angle = mfmod(predicted_angle, pi2);
-        if (predicted_angle < 0.0f) predicted_angle += pi2;
+        predicted_angle = mfmod(predicted_angle, TWO_PI);
+        if (predicted_angle < 0.0f) predicted_angle += TWO_PI;
 
         // Update using this sample's prediction.
         // The nearest angular branch assumes prediction error is less than pi radians.
         float innovation = raw_rotor_angle - predicted_angle; // Wrapped angle residual, rad.
-        if (innovation < -PI) innovation += pi2;
-        else if (innovation > PI) innovation -= pi2;
+        if (innovation < -PI_F) innovation += TWO_PI;
+        else if (innovation > PI_F) innovation -= TWO_PI;
     VB_PROFILE_DETAIL_SPLIT(kalman_profile.start)
         filter_state.rotor_angle = predicted_angle + filters_config.g1 * innovation;
         filter_state.rotor_velocity = predicted_velocity + filters_config.g2 * innovation;
@@ -74,7 +74,7 @@ void FOC::apply_kalman() {
     VB_PROFILE_DETAIL_SPLIT(kalman_profile.mid)
 
     // Convert rotor mechanical radians to electrical phase and output-shaft velocity.
-    const float electrical_period = pi2 / static_cast<float>(drive_info.common.ppairs);
+    const float electrical_period = TWO_PI / static_cast<float>(drive_info.common.ppairs);
     elec_angle = drive_info.common.ppairs * mfmod(predicted_angle, electrical_period);
     shaft_velocity = predicted_velocity / drive_info.common.gear_ratio;
     VB_PROFILE_DETAIL_END(kalman_profile.end, t_start)
@@ -86,12 +86,12 @@ void FOC::update_shaft_angle() {
     static int32_t rotor_turns = 0;
     float travel = raw_rotor_angle - prev_rotor_angle;
     prev_rotor_angle = raw_rotor_angle;
-    if (travel < -PI) {
+    if (travel < -PI_F) {
         rotor_turns += 1;
-    } else if (travel > PI) {
+    } else if (travel > PI_F) {
         rotor_turns -= 1;
     }
-    float rotor_angle_unwrapped = (float)rotor_turns * pi2 + raw_rotor_angle;
+    float rotor_angle_unwrapped = (float)rotor_turns * TWO_PI + raw_rotor_angle;
     shaft_angle = rotor_angle_unwrapped / drive_info.common.gear_ratio;
 }
 
@@ -165,7 +165,7 @@ void FOC::update() {
 
     // calculate sin and cos of electrical angle with the help of CORDIC.
     // convert electrical angle from float to q31. electrical theta should be [-pi, pi]
-    int32_t ElecTheta_q31 = (int32_t)((elec_angle / PI - 1.0f) * 2147483648.0f);
+    int32_t ElecTheta_q31 = (int32_t)((elec_angle / PI_F - 1.0f) * 2147483648.0f);
     // load angle value into CORDIC. Input value is in PIs!
     LL_CORDIC_WriteData(CORDIC, ElecTheta_q31);
 
