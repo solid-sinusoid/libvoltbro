@@ -317,6 +317,7 @@ protected:
     }
 
     FORCE_INLINE void force_bootstrap_charge() {
+        bus_current = 0.0f;
         DQs[0] = 0;
         DQs[1] = 0;
         DQs[2] = 0;
@@ -421,6 +422,7 @@ public:
             CRITICAL_SECTION({
                 __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(htim);
                 _is_on = false;
+                bus_current = 0.0f;
                 bootstrap_charge_deadline_ms = 0;
                 reset_servo_input();
                 (void)set_voltage_point(0.0f);

@@ -91,6 +91,7 @@ protected:
     } filter_state;
     float elec_angle = 0;
     float I_Q = 0;
+    arm_atomic(float) bus_current = 0;
     calibration_array_t* lookup_table = nullptr;
     GenericEncoder& encoder;
     const FiltersConfig filters_config;
@@ -174,6 +175,9 @@ public:
     }
     float get_working_current() {
         return I_Q;
+    }
+    float get_bus_current() const {
+        return bus_current;
     }
 
     bool set_foc_point(FOCTarget&& target) {

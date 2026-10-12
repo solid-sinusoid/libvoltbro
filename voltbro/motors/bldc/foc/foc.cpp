@@ -323,6 +323,8 @@ void FOC::update() {
     DQs[2] = (uint16_t)(float(full_pwm + 1) * dtc_w);
 
     limit_norm(&V_d, &V_q, busV);
+    // Estimate DC-link current from dq power; negative values indicate regeneration.
+    bus_current = busV > 0.0f ? 1.5f * (V_d * I_D + V_q * I_Q) / busV : 0.0f;
     VB_PROFILE_DETAIL_START()
     float v_u = 0, v_v = 0, v_w = 0;
     float dtc_u = 0, dtc_v = 0, dtc_w = 0;
