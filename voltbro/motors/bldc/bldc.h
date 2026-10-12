@@ -29,7 +29,7 @@ enum class SetPointType: uint8_t  {
 enum class DrivePhase: uint8_t { PHASE_A = 0, PHASE_B = 1, PHASE_C = 2 };
 
 struct DriveInfo {
-    const float torque_const; // Output-shaft torque per q-axis ampere, N m/A.
+    float torque_const; // Output-shaft torque per q-axis ampere, N m/A.
     float max_current;
     float max_torque;
     float stall_current;
@@ -104,7 +104,7 @@ protected:
         return static_cast<float>(drive_runtime_config.user_angle_direction);
     }
 
-    const DriveInfo drive_info;
+    DriveInfo drive_info;
     BaseInverter& inverter;
     const int32_t full_pwm;
     TIM_HandleTypeDef* const htim;
@@ -144,6 +144,10 @@ public:
         if (!set_runtime_config(runtime_config)) {
             exit(-1);
         }
+    }
+
+    void set_torque_const(float value) {
+        CRITICAL_SECTION({ drive_info.torque_const = value; })
     }
 
     virtual bool check_runtime_config(const DriveRuntimeConfig& runtime_config) override {
