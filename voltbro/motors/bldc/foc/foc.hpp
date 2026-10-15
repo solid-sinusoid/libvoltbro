@@ -24,7 +24,7 @@ using __non_const_calib_array_t = std::array<int, CALIBRATION_BUFF_SIZE>;
 using calibration_array_t = const __non_const_calib_array_t;
 
 struct __attribute__((packed)) CalibrationData {
-    static constexpr uint32_t TYPE_ID = 0x89ABCDEF;
+    static constexpr uint32_t TYPE_ID = 0x89ABCDF0;
     bool was_calibrated;
     bool is_encoder_inverted;
     uint16_t ppair_counter;
@@ -129,8 +129,11 @@ protected:
 
     void set_windings_calibration(float current_angle);
 public:
-    virtual void calibrate(CalibrationData& calibration_data, std::byte* additional_buffer, size_t buffer_size,
-                           void (*progress)(int done, int total) = nullptr);
+    // Progress follows completed stages. Returning false from can_continue aborts
+    // with PWM disabled; the caller must discard partial data. True means success.
+    virtual bool calibrate(CalibrationData& calibration_data, std::byte* additional_buffer, size_t buffer_size,
+                           void (*progress)(int done, int total) = nullptr,
+                           bool (*can_continue)() = nullptr);
     void apply_calibration(CalibrationData& calibration_data) {
         // Replace config parameters with the ones loaded from EEPROM
         // Very ugly hack, but it will work for now

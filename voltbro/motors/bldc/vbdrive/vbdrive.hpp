@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "temperature.hpp"
 #include "voltbro/utils.hpp"
 #if defined(STM32G4) || defined(STM32_G)
 #include "stm32g4xx_hal.h"
@@ -7,6 +8,7 @@
 #include "stm32g4xx_ll_i2c.h"
 #include "stm32g4xx_ll_gpio.h"
 #include "stm32g4xx_ll_spi.h"
+#include "stm32g4xx_ll_tim.h"
 
 #if defined(HAL_TIM_MODULE_ENABLED) && defined(HAL_CORDIC_MODULE_ENABLED) && defined(HAL_ADC_MODULE_ENABLED) && defined(HAL_SPI_MODULE_ENABLED) && defined(HAL_I2C_MODULE_ENABLED)
 
@@ -26,8 +28,8 @@ private:
     const volatile uint32_t __attribute__((aligned(4))) ADC_2_buffer[2] = {};
     ADC_HandleTypeDef* hadc_2;
 
-    float stator_temperature = 0;
-    float mcu_temperature = 0;
+    float stator_temperature = NAN;
+    float mcu_temperature = NAN;
 public:
     VBInverter(ADC_HandleTypeDef* hadc_1, ADC_HandleTypeDef* hadc_2):
         hadc_1(hadc_1), hadc_2(hadc_2) {};
@@ -83,9 +85,14 @@ public:
         I_C = -I_A - I_B;
     }
 
+    // Convert factory-calibrated MCU and beta-model NTC ADC readings to Celsius.
     void update_temperature() {
         const auto vref_adc = ADC_1_buffer[3];
-        if (vref_adc == 0) {
+        if (!has_started() || vref_adc == 0 || vref_adc >= 4095 ||
+            ADC_1_buffer[2] == 0 || ADC_1_buffer[2] >= 4095 ||
+            *VREFINT_CAL_ADDR == 0 || *VREFINT_CAL_ADDR >= 4095 ||
+            *TEMPSENSOR_CAL1_ADDR == 0 || *TEMPSENSOR_CAL2_ADDR >= 4095 ||
+            *TEMPSENSOR_CAL2_ADDR <= *TEMPSENSOR_CAL1_ADDR) {
             mcu_temperature = NAN;
         } else {
             // STSPIN32G4 embeds STM32G431VBx3; its datasheet DS12589 Table 5 specifies 30/130 C at VDDA=3.0 V.
@@ -98,7 +105,13 @@ public:
             mcu_temperature = 30.0f + 100.0f * (temp_adc_at_cal_vdda - cal1) / (cal2 - cal1);
         }
 
-        float thermistor = 1.0f / (4095.0f / ADC_2_buffer[1] - 1.0f);
+        // Equal nominal divider/NTC resistances: R/R25 = adc / (4095 - adc).
+        const auto therm_adc = ADC_2_buffer[1];
+        if (!has_started() || therm_adc == 0 || therm_adc >= 4095) {
+            stator_temperature = NAN;
+            return;
+        }
+        float thermistor = 1.0f / (4095.0f / therm_adc - 1.0f);
         float steinhart = logf(thermistor);
         steinhart /= 3950.0f;
         steinhart += 1.0f / (25.0f + 273.15f);
@@ -307,6 +320,11 @@ protected:
     static constexpr uint16_t max_pwm_compare = 1760; // Reserve the current-sampling window.
     static constexpr uint32_t bootstrap_charge_time_ms = 5U;
 
+    float max_stator_temperature = DEFAULT_MAX_STATOR_TEMPERATURE_K;
+    float restart_stator_temperature = DEFAULT_RESTART_STATOR_TEMPERATURE_K;
+    bool stator_hot = false;
+    VBDriveStatus thermal_status = VBDriveStatus::COOLING_DOWN;
+
     AngleEncoderType angle_encoder =  AngleEncoderType::ROTOR;
     STSPIN32G4& gate_driver;
     InductiveSensor& inductive_sensor;
@@ -364,6 +382,37 @@ public:
         inductive_sensor(inductive_sensor)
         {}
 
+        VBDriveStatus get_status() const { return thermal_status; }
+
+        ThermalState get_thermal_health() const {
+            if (thermal_status == VBDriveStatus::COOLING_DOWN) return ThermalState::CAUTION;
+            return static_cast<const VBInverter&>(inverter).get_stator_temperature() + 273.15f >=
+                restart_stator_temperature ? ThermalState::ADVISORY : ThermalState::NOMINAL;
+        }
+
+        // Evaluate hysteresis from one temperature snapshot
+        [[gnu::noinline]] void update_thermal_protection() {
+            auto& temperatures = static_cast<VBInverter&>(inverter);
+            temperatures.update_temperature();
+            const float stator = temperatures.get_stator_temperature() + 273.15f;
+            const float mcu = temperatures.get_mcu_temperature() + 273.15f;
+            if (std::isfinite(stator)) {
+                if (stator >= max_stator_temperature) stator_hot = true;
+                else if (stator <= restart_stator_temperature) stator_hot = false;
+            }
+            const auto previous_status = thermal_status;
+            thermal_status = !std::isfinite(stator) || !std::isfinite(mcu) || stator_hot ||
+                mcu < MCU_MIN_TEMPERATURE_K || mcu > MCU_MAX_TEMPERATURE_K
+                ? VBDriveStatus::COOLING_DOWN : VBDriveStatus::NOMINAL;
+            if (thermal_status == VBDriveStatus::COOLING_DOWN &&
+                (is_on() || previous_status != thermal_status)) stop();
+        }
+
+        void set_temperature_limits(float maximum, float restart) {
+            max_stator_temperature = maximum;
+            restart_stator_temperature = restart;
+        }
+
         void set_current_regulator_params(float kp, float ki) {
             q_reg.update_config(kp, ki, 0);
             d_reg.update_config(kp, ki, 0);
@@ -398,22 +447,19 @@ public:
             return inductive_sensor.get_raw_value();
         }
 
-        HAL_StatusTypeDef init() override {
-            HAL_StatusTypeDef result = FOC::init();
-            if (result != HAL_OK) {
-                return result;
-            }
-            result = HAL_TIMEx_PWMN_Start(htim, TIM_CHANNEL_1); // AN-phase
-            if (result != HAL_OK) {
-                return result;
-            }
-            result = HAL_TIMEx_PWMN_Start(htim, TIM_CHANNEL_2); // BN-phase
-            if (result != HAL_OK) {
-                return result;
-            }
-            result = HAL_TIMEx_PWMN_Start(htim, TIM_CHANNEL_3); // CN-phase
-
+        [[gnu::cold]] HAL_StatusTypeDef init() override {
+            // Configure channel outputs without HAL PWM_Start, which would set MOE
+            // before a valid temperature snapshot and the startup enable gate.
+            __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(htim);
+            LL_TIM_CC_EnableChannel(htim->Instance, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH2 |
+                LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH1N | LL_TIM_CHANNEL_CH2N | LL_TIM_CHANNEL_CH3N);
+            HAL_StatusTypeDef result = HAL_TIM_Base_Start(htim);
+            if (result != HAL_OK) return result;
+            inverter.start();
+            result = encoder.init();
+            if (result != HAL_OK) return result;
             inductive_sensor.init();
+            update_thermal_protection();
 
             return result;
         }
@@ -435,6 +481,8 @@ public:
         }
 
         HAL_StatusTypeDef start() override {
+            update_thermal_protection();
+            if (thermal_status != VBDriveStatus::NOMINAL) return HAL_ERROR;
             (void)stop();
             bootstrap_charge_deadline_ms = HAL_GetTick() + bootstrap_charge_time_ms;
 

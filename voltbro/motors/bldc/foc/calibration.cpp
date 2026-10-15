@@ -64,8 +64,8 @@ public:
 };
 
 // NOTE: caller has to GUARANTEE that calculations_buffer is AT LEAST (CALIBRATION_BUFF_SIZE + 1) * sizeof(int) bytes long
-void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buffer, size_t buffer_size,
-                    void (*progress)(int done, int total)) {
+[[gnu::optimize("Os")]] bool FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buffer, size_t buffer_size,
+                    void (*progress)(int done, int total), bool (*can_continue)()) {
     int completed = 0;
     constexpr int total = 10;
     auto stage_done = [&]() {
@@ -86,12 +86,18 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         DQs[2] = 0;
         set_pwm();
      };
-    auto set_electric_angle = [this](float angle, uint32_t delay=20) {
+    // Check `can_continue` before each energized step and at most every 10 ms during its wait.
+    auto set_electric_angle = [this, can_continue](float angle, uint32_t delay=20) {
+        if (can_continue && !can_continue()) { stop(); return false; }
         set_windings_calibration(angle);
-        HAL_Delay(delay);
-        for (int i = 0; i < 5; i++) {
-            update_angle();
+        while (delay > 0) {
+            const uint32_t interval = std::min<uint32_t>(delay, 10U);
+            HAL_Delay(interval);
+            delay -= interval;
+            if (can_continue && !can_continue()) { stop(); return false; }
         }
+        for (int i = 0; i < 5; i++) update_angle();
+        return true;
     };
 
     // Sanity check: quarter mechanical turn forward (open-loop)
@@ -100,7 +106,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         const float end_angle = TWO_PI * (float)drive_info.common.ppairs * drive_info.common.gear_ratio / 4;
         float ang = 0.0f;
         while (ang < end_angle) {
-            set_electric_angle(ang, 10);
+            if (!set_electric_angle(ang, 10)) return false;
             ang += elec_step;
         }
     }
@@ -127,7 +133,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
     };
     auto return_to_zero = [this, &ppairs, &set_electric_angle, &get_circular_error, &zero_pwm]() {
         float angle = 0.0f;
-        set_electric_angle(angle, 100);
+        if (!set_electric_angle(angle, 100)) return false;
 
         float step = ppairs * TWO_PI / 4000.0f;
         if (raw_rotor_angle < (encoder.CPR / 2.0f)) {
@@ -140,11 +146,11 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
                 Error_Handler();
             }
             angle += step;
-            set_electric_angle(angle, 5);
+            if (!set_electric_angle(angle, 5)) return false;
         }
-        set_electric_angle(0.0f, 100);
+        if (!set_electric_angle(0.0f, 100)) return false;
 
-        return raw_rotor_angle;
+        return true;
     };
 
     const int ppair_step_counts = 50;
@@ -152,18 +158,18 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
     const float ppair_step = TWO_PI / ppair_step_counts;
     const int overshoot_steps = 4;
 
-    auto offset_calibration_pass = [&](int* offset_array, int offset) {
+    auto offset_calibration_pass = [&](int* offset_array, int offset) -> std::optional<int> {
         // Undershoot at the start to avoid hysteresis then roll forward a bit
         for (int j = 1; j < overshoot_steps; j++) {
-            set_electric_angle(0 - ppair_step * j);
+            if (!set_electric_angle(0 - ppair_step * j)) return std::nullopt;
         }
         for (int j = overshoot_steps; j >= 1; j--) {
-            set_electric_angle(0 - ppair_step * j);
+            if (!set_electric_angle(0 - ppair_step * j)) return std::nullopt;
         }
 
         for (int i = 0; i < ppairs; i++) {
             const float local_zero_point = TWO_PI * i;
-            set_electric_angle(local_zero_point);
+            if (!set_electric_angle(local_zero_point)) return std::nullopt;
 
             int expected_value = encoder_steps_per_pair * i;
             int current_value = int(encoder.get_value()) - offset;
@@ -171,22 +177,22 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
             offset_array[i] = current_offset;
 
             for (int j = 0; j < ppair_step_counts; j++) {
-                set_electric_angle(local_zero_point + ppair_step * (j + 1));
+                if (!set_electric_angle(local_zero_point + ppair_step * (j + 1))) return std::nullopt;
             }
         }
         stage_done();
 
         // Overshoot at the end to avoid hysteresis then roll back a bit
         for (int j = 1; j < overshoot_steps; j++) {
-            set_electric_angle(TWO_PI * ppairs + ppair_step * j);
+            if (!set_electric_angle(TWO_PI * ppairs + ppair_step * j)) return std::nullopt;
         }
         for (int j = overshoot_steps; j >= 1; j--) {
-            set_electric_angle(TWO_PI * ppairs + ppair_step * j);
+            if (!set_electric_angle(TWO_PI * ppairs + ppair_step * j)) return std::nullopt;
         }
 
         for (int i = ppairs - 1; i >= 0; i--) {
             const float local_zero_point = TWO_PI * (i + 1);
-            set_electric_angle(local_zero_point);
+            if (!set_electric_angle(local_zero_point)) return std::nullopt;
 
             int expected_value = encoder_steps_per_pair * (i + 1);
             int current_value = int(encoder.get_value()) - offset;
@@ -194,7 +200,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
             offset_array[samples_count - i - 1] = current_offset;
 
             for (int j = 0; j < ppair_step_counts; j++) {
-                set_electric_angle(local_zero_point - ppair_step * (j + 1));
+                if (!set_electric_angle(local_zero_point - ppair_step * (j + 1))) return std::nullopt;
             }
         }
         stage_done();
@@ -206,9 +212,11 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         return offset_sum / samples_count;
     };
 
-    return_to_zero();
+    if (!return_to_zero()) return false;
     stage_done();
-    int average_offset = offset_calibration_pass(offset_samples, 0);
+    const auto offset = offset_calibration_pass(offset_samples, 0);
+    if (!offset) return false;
+    const int average_offset = *offset;
     calibration_data.meas_elec_offset = average_offset;
 
 #ifdef MONITOR
@@ -216,9 +224,11 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
 #else
     int verification_samples[samples_count] = {0};
 #endif
-    return_to_zero();
+    if (!return_to_zero()) return false;
     stage_done();
-    processing_stats.average_electric_discrepancy = offset_calibration_pass(verification_samples, average_offset);
+    const auto discrepancy = offset_calibration_pass(verification_samples, average_offset);
+    if (!discrepancy) return false;
+    processing_stats.average_electric_discrepancy = *discrepancy;
     for (auto sample : verification_samples) {
         if (abs(sample) > (encoder_steps_per_pair / 10)) {
             zero_pwm();
@@ -227,7 +237,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
     }
 //#pragma endregion
 
-    return_to_zero();
+    if (!return_to_zero()) return false;
     stage_done();
 
 //#pragma region Curve Sampling
@@ -264,7 +274,7 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
     float encoder_steps_in_electrical_radian = (float)encoder.CPR / (ppairs * TWO_PI);
 
     auto sample_point = [&](std::array<int, CALIBRATION_BUFF_SIZE>* arr, float angle_target) {
-        set_electric_angle(angle_target, 5);
+        if (!set_electric_angle(angle_target, 5)) return false;
 
         int expected_value = (int)roundf(angle_target * encoder_steps_in_electrical_radian);
         int offset_encoder_value = static_cast<int>(encoder.get_value()) - average_offset;
@@ -281,32 +291,33 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
         }
 
         (*arr)[idx] = get_circular_error(offset_encoder_value, expected_value, encoder.CPR);
+        return true;
     };
 
     // Undershoot at the start to avoid hysteresis then roll forward a bit
     for (int j = 1; j < overshoot_steps; j++) {
-        set_electric_angle(0 - ppair_step * j);
+        if (!set_electric_angle(0 - ppair_step * j)) return false;
     }
     for (int j = overshoot_steps; j >= 1; j--) {
-        set_electric_angle(0 - ppair_step * j);
+        if (!set_electric_angle(0 - ppair_step * j)) return false;
     }
     float electric_angle = 0;
     while (electric_angle < electrical_span) {
-        sample_point(fwd_calibration_array, electric_angle);
+        if (!sample_point(fwd_calibration_array, electric_angle)) return false;
         electric_angle += electric_angle_delta;
     }
     stage_done();
 
     // Overshoot at the end to avoid hysteresis then roll back a bit
     for (int j = 1; j < overshoot_steps; j++) {
-        set_electric_angle(electrical_span + ppair_step * j);
+        if (!set_electric_angle(electrical_span + ppair_step * j)) return false;
     }
     for (int j = overshoot_steps; j >= 1; j--) {
-        set_electric_angle(electrical_span + ppair_step * j);
+        if (!set_electric_angle(electrical_span + ppair_step * j)) return false;
     }
     electric_angle = electrical_span;
     while (electric_angle > 0) {
-        sample_point(bwd_calibration_array, electric_angle);
+        if (!sample_point(bwd_calibration_array, electric_angle)) return false;
         electric_angle -= electric_angle_delta;
     }
     stage_done();
@@ -422,6 +433,8 @@ void FOC::calibrate(CalibrationData& calibration_data, std::byte* additional_buf
 
     memset(additional_buffer, 0, buffer_size);
     asm volatile("nop");  // debug breakpoint
+    if (can_continue && !can_continue()) { stop(); return false; }
+    return true;
 }
 
 #endif
