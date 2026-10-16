@@ -200,6 +200,11 @@ void FOC::update() {
     VB_PROFILE_DETAIL_END(foc_profile.currents, t_start)
 
     const float busV = inverter.get_busV();
+    // Reconstruct supply current from the applied, clipped PWM of the sampled interval.
+    const float sampled_bus_current = busV > 0.0f
+        ? (DQs[0] * inverter.get_A() + DQs[1] * inverter.get_B() + DQs[2] * inverter.get_C()) /
+            static_cast<float>(full_pwm + 1)
+        : 0.0f;
 
     shaft_torque = I_Q * drive_info.torque_const;
 
@@ -323,8 +328,6 @@ void FOC::update() {
     DQs[2] = (uint16_t)(float(full_pwm + 1) * dtc_w);
 
     limit_norm(&V_d, &V_q, busV);
-    // Estimate DC-link current from dq power; negative values indicate regeneration.
-    bus_current = busV > 0.0f ? 1.5f * (V_d * I_D + V_q * I_Q) / busV : 0.0f;
     VB_PROFILE_DETAIL_START()
     float v_u = 0, v_v = 0, v_w = 0;
     float dtc_u = 0, dtc_v = 0, dtc_w = 0;
@@ -339,6 +342,10 @@ void FOC::update() {
     DQs[2] = (uint16_t)(float(full_pwm + 1) * dtc_w);
 
     set_pwm();
+    // Filter the signed estimate; negative values indicate regeneration.
+    bus_current = busV > 0.0f
+        ? bus_current + filters_config.I_lpf_coefficient * (sampled_bus_current - bus_current)
+        : 0.0f;
     VB_PROFILE_DETAIL_END(foc_profile.pwm, t_start)
     VB_PROFILE_DETAIL_END(foc_profile.total, start_total)
 }
