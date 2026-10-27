@@ -183,13 +183,15 @@ public:
         return bus_current;
     }
 
+    bool is_foc_point_valid(const FOCTarget& target) const {
+        return is_torque_target_valid(target.torque) &&
+               is_angle_target_valid(target.angle) &&
+               is_velocity_target_valid(target.velocity) &&
+               std::isfinite(target.angle_kp) && std::isfinite(target.velocity_kp);
+    }
+
     bool set_foc_point(FOCTarget&& target) {
-        if (
-            !is_torque_target_valid(target.torque) ||
-            !is_angle_target_valid(target.angle) ||
-            !is_velocity_target_valid(target.velocity) ||
-            !std::isfinite(target.angle_kp) || !std::isfinite(target.velocity_kp)
-        ) {
+        if (!is_foc_point_valid(target)) {
             return false;
         }
         CRITICAL_SECTION({

@@ -229,12 +229,6 @@ public:
     FORCE_INLINE virtual float get_torque() const {
         return shaft_torque * get_direction_multiplier();
     }
-    float get_voltage() const {
-        return 0; // TODO
-    }
-    float get_torque() const {
-        return 0; // TODO
-    }
 
     void detect_stall(double passed_time_abs);
     void quit_stall();
